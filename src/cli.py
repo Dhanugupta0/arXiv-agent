@@ -22,6 +22,7 @@ from rich import print as rprint
 from .graph import ArxivDigestGraph
 from .models import AgentState
 from . import session
+from .config import has_groq_key
 
 console = Console()
 
@@ -140,13 +141,14 @@ def cmd_digest(query: str, skip_qa: bool = False) -> None:
     console.print(f"  [dim]Parse method:[/dim] {state.parse_method}")
 
     # Node 5: Chunk & Embed
-    with console.status("[cyan]🧩 Chunking & embedding (Jina AI → ChromaDB)...[/cyan]", spinner="dots"):
+    with console.status("[cyan]🧩 Chunking & embedding (local model → ChromaDB)...[/cyan]", spinner="dots"):
         graph.chunk_and_embed(state)
 
     console.print(f"  [dim]Chunks:[/dim] {len(state.chunks)} chunks indexed")
 
     # Node 6: Summarize
-    with console.status("[cyan]📝 Generating briefing (Groq)...[/cyan]", spinner="dots"):
+    label = "Groq" if has_groq_key() else "extractive (no API key)"
+    with console.status(f"[cyan]📝 Generating briefing ({label})...[/cyan]", spinner="dots"):
         graph.summarize(state)
 
     # Show the briefing
@@ -208,9 +210,13 @@ def cmd_sessions() -> None:
 
 def cmd_demo() -> None:
     """
-    Fully offline demo using the bundled synthetic paper.
+    Demo mode using the bundled synthetic paper.
     Exercises nodes 5–7 without needing internet for arXiv.
-    Still requires GROQ_API_KEY and JINA_API_KEY for LLM + embeddings.
+
+    Works with or without API keys:
+      - With GROQ_API_KEY: full LLM-powered briefing + QA
+      - Without GROQ_API_KEY: extractive briefing + extractive QA
+    Embeddings are always local (sentence-transformers), no key needed.
     """
     from .models import PaperMetadata
 
@@ -221,6 +227,15 @@ def cmd_demo() -> None:
         border_style="magenta",
     ))
     console.print()
+
+    if not has_groq_key():
+        console.print(
+            "[yellow]ℹ  GROQ_API_KEY not set — running in zero-config mode.[/yellow]\n"
+            "[dim]   Briefing: extractive heuristics (no LLM)\n"
+            "   QA: returns top retrieved passage directly\n"
+            "   Set GROQ_API_KEY in .env for full LLM-powered output.[/dim]"
+        )
+        console.print()
 
     sample_path = Path(__file__).resolve().parent.parent / "sample_data" / "sample_paper.txt"
     if not sample_path.exists():
@@ -251,13 +266,14 @@ def cmd_demo() -> None:
     graph = ArxivDigestGraph()
 
     # Node 5
-    with console.status("[cyan]🧩 Chunking & embedding...[/cyan]", spinner="dots"):
+    with console.status("[cyan]🧩 Chunking & embedding (local model)...[/cyan]", spinner="dots"):
         graph.chunk_and_embed(state)
 
     console.print(f"  [dim]Chunks:[/dim] {len(state.chunks)} chunks indexed")
 
     # Node 6
-    with console.status("[cyan]📝 Generating briefing...[/cyan]", spinner="dots"):
+    label = "Groq" if has_groq_key() else "extractive (no API key)"
+    with console.status(f"[cyan]📝 Generating briefing ({label})...[/cyan]", spinner="dots"):
         graph.summarize(state)
 
     _show_briefing(state)

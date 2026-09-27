@@ -4,14 +4,16 @@ Node 7: Grounded QA with anti-hallucination prompt.
 Retrieves top-k chunks from ChromaDB, then instructs Groq to answer
 using ONLY those chunks.  If the answer isn't in the paper, the model
 is told to refuse rather than hallucinate.
+
+When GROQ_API_KEY is not set, falls back to returning the most relevant
+retrieved chunk directly (extractive QA).
 """
 from __future__ import annotations
 
 from typing import List, Tuple
 
-from . import llm
+from .config import has_groq_key, QA_TOP_K
 from . import vectorstore
-from .config import QA_TOP_K
 from .models import AgentState
 
 GROUNDED_SYSTEM_PROMPT = (
@@ -47,14 +49,35 @@ def _format_context(retrieved: List[Tuple[str, float]]) -> str:
     return "\n\n".join(parts)
 
 
+def _extractive_answer(state: AgentState, question: str, retrieved: List[Tuple[str, float]]) -> str:
+    """
+    No-LLM fallback: return the most relevant chunk directly.
+    Provides a useful answer even without an API key.
+    """
+    if not retrieved:
+        return (
+            "No indexed content is available for this paper, "
+            "so I can't answer questions about it."
+        )
+
+    best_text, best_score = retrieved[0]
+    truncated = _truncate(best_text, max_words=300)
+
+    return (
+        f"**[Extractive answer — no LLM configured]**\n\n"
+        f"Most relevant passage (relevance: {best_score:.2f}):\n\n"
+        f"> {truncated}\n\n"
+        f"_Set GROQ_API_KEY in .env for synthesized, grounded answers._"
+    )
+
+
 def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> str:
     """
     Answer a user question grounded in the paper's chunks and summary.
 
     1. Retrieve top-k relevant chunks from ChromaDB
-    2. Combine with paper title and summary/abstract
-    3. Send to Groq with the anti-hallucination prompt
-    4. Return the grounded answer
+    2. If GROQ_API_KEY is set: combine with paper context, send to Groq
+    3. If GROQ_API_KEY is NOT set: return the top chunk directly (extractive)
     """
     retrieved = vectorstore.search(state.collection_name, question, top_k=top_k)
 
@@ -64,8 +87,15 @@ def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> 
             "so I can't answer questions about it."
         )
 
+    # No-LLM fallback path
+    if not has_groq_key():
+        return _extractive_answer(state, question, retrieved)
+
+    # LLM-powered grounded QA
+    from . import llm  # deferred import
+
     context = _format_context(retrieved)
-    
+
     paper_context = f"Title: {state.selected_paper.title}\n"
     if state.briefing:
         paper_context += f"Summary: {state.briefing.summary}\n"
@@ -79,4 +109,3 @@ def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> 
     )
 
     return llm.complete(GROUNDED_SYSTEM_PROMPT, user)
-

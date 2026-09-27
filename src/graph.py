@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from typing import List
 
-from . import arxiv_api, pdf_parser, llm, vectorstore
+from . import arxiv_api, pdf_parser, vectorstore
 from .briefing import generate_briefing
 from .chunking import prepare_chunks
 from .models import AgentState, PaperMetadata
 from .qa import answer_question
-from .config import MAX_SEARCH_RESULTS, MAX_EXPANSION_ATTEMPTS
+from .config import MAX_SEARCH_RESULTS, MAX_EXPANSION_ATTEMPTS, has_groq_key
 
 
 class ArxivDigestGraph:
@@ -81,8 +81,10 @@ class ArxivDigestGraph:
             state.selected_paper = candidates[0]
             return
 
-        # Use Groq LLM to pick the most relevant paper
-        chosen = self._llm_rank(state.search_keywords or state.input_query, candidates)
+        # Use Groq LLM to pick the most relevant paper (if key is available)
+        chosen = None
+        if has_groq_key():
+            chosen = self._llm_rank(state.search_keywords or state.input_query, candidates)
         if chosen is not None:
             state.selected_paper = chosen
             return
@@ -92,6 +94,7 @@ class ArxivDigestGraph:
 
     def _llm_rank(self, query: str, candidates: List[PaperMetadata]):
         """LLM-as-judge: pick the most relevant paper from candidates."""
+        from . import llm  # deferred import
         listing = "\n".join(
             f"{i+1}. [{c.arxiv_id}] {c.title}\n   Abstract: {c.abstract[:400]}"
             for i, c in enumerate(candidates)
@@ -141,7 +144,7 @@ class ArxivDigestGraph:
             chunks = prepare_chunks(state.selected_paper.abstract)
         state.chunks = chunks
 
-        # Embed via Jina AI and store in ChromaDB
+        # Embed via sentence-transformers (local) and store in ChromaDB
         state.collection_name = vectorstore.index_chunks(
             chunks, state.selected_paper.arxiv_id
         )

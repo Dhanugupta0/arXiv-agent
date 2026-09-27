@@ -7,7 +7,7 @@ Modules:
     arxiv_api   — Node 1 (query understanding) + Node 2 (arXiv retrieval)
     pdf_parser  — Node 4 (PDF download + multi-engine text extraction)
     chunking    — Node 5a (reference stripping + word-based chunking)
-    embeddings  — Node 5b (Jina AI embeddings via HTTP API)
+    embeddings  — Node 5b (local embeddings via sentence-transformers)
     vectorstore — ChromaDB-backed vector store for RAG retrieval
     llm         — Groq API LLM provider
     briefing    — Node 6 (structured executive briefing generation)

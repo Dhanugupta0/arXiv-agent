@@ -17,16 +17,17 @@ load_dotenv(_PROJECT_ROOT / ".env")
 
 # ── API Keys ──────────────────────────────────────────────────────────────
 GROQ_API_KEY: str = os.environ.get("GROQ_API_KEY", "")
-JINA_API_KEY: str = os.environ.get("JINA_API_KEY", "")
 
 # ── Groq LLM settings ────────────────────────────────────────────────────
-GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
+GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_TEMPERATURE: float = float(os.environ.get("GROQ_TEMPERATURE", "0.2"))
-GROQ_MAX_TOKENS: int = int(os.environ.get("GROQ_MAX_TOKENS", "800"))
+GROQ_MAX_TOKENS: int = int(os.environ.get("GROQ_MAX_TOKENS", "4096"))
 
-# ── Jina AI embeddings ───────────────────────────────────────────────────
-JINA_EMBEDDING_MODEL: str = os.environ.get("JINA_EMBEDDING_MODEL", "jina-embeddings-v3")
-JINA_EMBEDDING_DIM: int = int(os.environ.get("JINA_EMBEDDING_DIM", "1024"))
+# ── Local embedding model ────────────────────────────────────────────────
+# BAAI/bge-small-en-v1.5: 33M params, 384-dim, CPU-friendly.
+# Downloads ~130MB from HuggingFace on first run, then works fully offline.
+EMBEDDING_MODEL: str = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+EMBEDDING_DIM: int = int(os.environ.get("EMBEDDING_DIM", "384"))
 
 # ── Chunking ──────────────────────────────────────────────────────────────
 CHUNK_WORDS: int = 800
@@ -44,3 +45,9 @@ MAX_EXPANSION_ATTEMPTS: int = 1
 
 # ── RAG QA ────────────────────────────────────────────────────────────────
 QA_TOP_K: int = 3
+
+# ── Helpers ───────────────────────────────────────────────────────────────
+
+def has_groq_key() -> bool:
+    """Check whether a Groq API key is configured."""
+    return bool(GROQ_API_KEY and GROQ_API_KEY.strip())

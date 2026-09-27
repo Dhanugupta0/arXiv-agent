@@ -10,13 +10,14 @@ arxiv>=2.1.0
 pymupdf>=1.24
 pypdf>=4.0
 
-# LLM (Groq)
+# LLM (Groq) — optional for zero-config mode
 groq>=0.9.0
+
+# Local embeddings (downloads ~130MB model on first run, then fully offline)
+sentence-transformers>=3.0
 
 # Vector database
 chromadb>=0.5.0
 
 # CLI styling
 rich>=13.0
-
-# Jina AI embeddings (via HTTP requests — no extra package needed)

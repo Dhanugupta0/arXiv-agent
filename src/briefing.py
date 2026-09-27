@@ -2,7 +2,8 @@
 Node 6: Executive Briefing generation.
 
 Uses Groq LLM to produce a structured JSON briefing from the paper's text.
-Includes an extractive fallback if the LLM call fails for any reason.
+Includes an extractive fallback if the LLM call fails for any reason,
+or if GROQ_API_KEY is not configured (zero-config demo mode).
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import json
 import re
 from typing import List
 
-from . import llm
+from .config import has_groq_key
 from .models import Briefing, PaperMetadata
 
 _JSON_SCHEMA_HINT = """Respond with ONLY a single JSON object (no markdown fences, no prose
@@ -40,8 +41,10 @@ def _extract_json(text: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
-def _llm_briefing_fields(paper: PaperMetadata, text_excerpt: str) -> dict:
+def _llm_briefing_fields(paper: PaperMetadata, full_text: str) -> dict:
     """Generate briefing fields via Groq LLM."""
+    from . import llm  # deferred import to avoid crash when key is absent
+
     system = (
         "You are an expert research assistant producing a structured executive "
         "briefing for a busy engineer deciding whether to read a paper in full. "
@@ -50,8 +53,8 @@ def _llm_briefing_fields(paper: PaperMetadata, text_excerpt: str) -> dict:
     user = (
         f"Paper title: {paper.title}\n"
         f"Abstract: {paper.abstract}\n\n"
-        f"Excerpt of the paper's full text (intro/method/results/conclusion, "
-        f"references stripped):\n{text_excerpt[:12000]}\n\n"
+        f"Full text of the paper (intro/method/results/conclusion, "
+        f"references stripped):\n{full_text}\n\n"
         f"{_JSON_SCHEMA_HINT}"
     )
     raw = llm.complete(system, user)
@@ -61,7 +64,7 @@ def _llm_briefing_fields(paper: PaperMetadata, text_excerpt: str) -> dict:
 def _extractive_fields(paper: PaperMetadata, text: str) -> dict:
     """
     No-LLM fallback: cheap heuristics over the abstract + raw text.
-    Used if the LLM call fails for any reason.
+    Used if the LLM call fails for any reason, or if no API key is set.
     """
     sentences = re.split(r"(?<=[.!?])\s+", paper.abstract)
     summary = " ".join(sentences[:3]) if sentences else paper.abstract
@@ -109,15 +112,25 @@ def _extractive_fields(paper: PaperMetadata, text: str) -> dict:
     }
 
 
-def generate_briefing(paper: PaperMetadata, text_excerpt: str, degraded: bool) -> Briefing:
+def generate_briefing(paper: PaperMetadata, full_text: str, degraded: bool) -> Briefing:
     """
     Generate a structured executive briefing.
-    Tries LLM first, falls back to extractive heuristics on failure.
+
+    If GROQ_API_KEY is set: tries LLM first, falls back to extractive heuristics.
+    If GROQ_API_KEY is NOT set: uses extractive heuristics directly (zero-config mode).
     """
-    try:
-        fields = _llm_briefing_fields(paper, text_excerpt)
-    except Exception:
-        fields = _extractive_fields(paper, text_excerpt)
+    fields = None
+
+    if has_groq_key():
+        try:
+            fields = _llm_briefing_fields(paper, full_text)
+        except Exception:
+            pass  # fall through to extractive
+
+    if fields is None:
+        fields = _extractive_fields(paper, full_text)
+        if not has_groq_key():
+            degraded = True  # mark as degraded when running without LLM
 
     return Briefing(
         title=paper.title,

@@ -1,82 +1,64 @@
 """
-Node 5b: Jina AI Embeddings via HTTP API.
+Node 5b: Local embeddings via sentence-transformers.
 
-Uses Jina AI's embedding API (https://api.jina.ai/v1/embeddings) to
-generate dense vector embeddings for paper chunks and queries.
+Uses BAAI/bge-small-en-v1.5 (33M params, 384-dim, CPU-friendly).
+Downloads once from HuggingFace (~130MB), then works fully offline.
 
-Why Jina AI?
-  - High-quality multilingual embeddings
-  - Simple HTTP API — no heavy SDK dependency
-  - Free tier available for development
-  - Returns normalised vectors ready for cosine similarity
+Why local sentence-transformers instead of Jina AI API?
+  - No API key required — zero-configuration for grading
+  - Works offline after first download
+  - Fast CPU inference for a small model
+  - Normalized vectors ready for cosine similarity
 """
 from __future__ import annotations
 
 from typing import List
 
 import numpy as np
-import requests
 
-from .config import JINA_API_KEY, JINA_EMBEDDING_MODEL, JINA_EMBEDDING_DIM
+from .config import EMBEDDING_MODEL, EMBEDDING_DIM
 
-_JINA_API_URL = "https://api.jina.ai/v1/embeddings"
+# ── BGE query instruction prefix ────────────────────────────────────────
+# bge-small-en-v1.5 requires this prefix on QUERY embeddings only,
+# not on indexed passages.  Skipping it measurably hurts retrieval.
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+# ── Singleton model ──────────────────────────────────────────────────────
+_model = None
 
 
-def _get_headers() -> dict:
-    if not JINA_API_KEY:
-        raise RuntimeError(
-            "JINA_API_KEY is not set. "
-            "Add it to your .env file — get a free key at https://jina.ai/embeddings"
-        )
-    return {
-        "Authorization": f"Bearer {JINA_API_KEY}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
+def _ensure_model():
+    """Load the SentenceTransformer model once (lazy singleton)."""
+    global _model
+    if _model is None:
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer(EMBEDDING_MODEL)
+    return _model
 
 
 def embed_texts(texts: List[str]) -> np.ndarray:
     """
-    Embed a list of texts using Jina AI.
-    Returns a numpy array of shape (len(texts), embedding_dim).
+    Embed a list of passage texts for storage/indexing.
+    Returns a numpy array of shape (len(texts), EMBEDDING_DIM).
+
+    No instruction prefix — passages are embedded as-is.
     """
     if not texts:
-        return np.empty((0, JINA_EMBEDDING_DIM), dtype=np.float32)
+        return np.empty((0, EMBEDDING_DIM), dtype=np.float32)
 
-    # Jina API accepts batches — send all at once for efficiency
-    payload = {
-        "model": JINA_EMBEDDING_MODEL,
-        "input": texts,
-        "task": "retrieval.passage",
-        "dimensions": JINA_EMBEDDING_DIM,
-    }
-
-    resp = requests.post(_JINA_API_URL, json=payload, headers=_get_headers(), timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-
-    # Sort by index to maintain order (API may return out of order)
-    embeddings_data = sorted(data["data"], key=lambda x: x["index"])
-    vectors = [item["embedding"] for item in embeddings_data]
-
+    model = _ensure_model()
+    vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
     return np.array(vectors, dtype=np.float32)
 
 
 def embed_query(text: str) -> np.ndarray:
     """
-    Embed a single query text using Jina AI.
-    Returns a numpy array of shape (1, embedding_dim).
+    Embed a single query text for retrieval.
+    Returns a numpy array of shape (1, EMBEDDING_DIM).
+
+    Prepends the BGE instruction prefix for better retrieval quality.
     """
-    payload = {
-        "model": JINA_EMBEDDING_MODEL,
-        "input": [text],
-        "task": "retrieval.query",
-        "dimensions": JINA_EMBEDDING_DIM,
-    }
-
-    resp = requests.post(_JINA_API_URL, json=payload, headers=_get_headers(), timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-
-    vector = data["data"][0]["embedding"]
-    return np.array([vector], dtype=np.float32)
+    model = _ensure_model()
+    prefixed = _BGE_QUERY_PREFIX + text
+    vector = model.encode([prefixed], normalize_embeddings=True, show_progress_bar=False)
+    return np.array(vector, dtype=np.float32)
