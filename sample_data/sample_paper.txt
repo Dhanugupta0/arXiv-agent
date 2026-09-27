@@ -1,0 +1,49 @@
+Sparse Gradient Checkpointing for KV-Cache Compression in Long-Context Transformers
+
+Abstract: Serving transformer-based language models over long contexts is bottlenecked by the memory footprint of the key-value (KV) cache, which grows linearly with sequence length and attention head count. We introduce Sparse Gradient Checkpointing (SGC), a training-time technique that identifies which attention heads contribute least to downstream loss and marks their KV entries for aggressive quantization during inference, without requiring any additional fine-tuning stage. Across three open-weight model families ranging from 1.3B to 13B parameters, SGC reduces KV-cache memory by 41-58% at a context length of 32k tokens while keeping perplexity degradation under 0.3 points on held-out validation data. We further show that the head-importance signal SGC produces during training can be reused directly as a static compression mask at deployment time, avoiding the need for a separate profiling pass.
+
+1. Introduction
+
+Long-context inference has become a central requirement for retrieval-augmented generation, multi-document summarization, and agentic workflows that must retain large amounts of tool output in context. The dominant cost of long-context serving is not compute but memory: the KV cache for a single 32k-token sequence in a 13B-parameter model can exceed the footprint of the model weights themselves. A wide range of prior approaches address this by compressing the KV cache post hoc, either through token eviction policies that discard low-attention-score tokens, or through low-rank projections applied after training. Both families of methods treat compression as a serving-time concern that is bolted on after the model is already trained, which forces a tradeoff between compression ratio and an expensive re-validation pass to check that quality has not regressed.
+
+We take a different approach. We observe that during ordinary training, gradient checkpointing already recomputes attention activations for a subset of layers, and that the gradient magnitude flowing back through a given attention head is a strong, essentially free signal for how much that head's KV entries matter to the model's output. Sparse Gradient Checkpointing (SGC) piggybacks on this recomputation to accumulate a per-head importance score over the course of ordinary pretraining or fine-tuning, with negligible additional compute. At the end of training, heads below an importance threshold are flagged, and their KV entries are quantized to 2 bits at inference time; the remaining heads keep full precision (or a lighter 4-bit quantization). Because the importance signal comes from training rather than from a serving-time profiling pass over held-out data, SGC requires no additional calibration step before deployment.
+
+2. Related Work
+
+Token-eviction methods such as sliding-window and attention-score-based eviction reduce the number of cached tokens but degrade abruptly once evicted context is needed for a later query, a common failure mode in retrieval-heavy workloads. Low-rank KV projection methods reduce the dimensionality of cached keys and values but require a dedicated calibration dataset representative of deployment traffic, which is often unavailable or drifts over time. Mixed-precision KV quantization schemes are the closest to our work in mechanism, but existing schemes assign precision uniformly across heads or use a serving-time profiling pass to decide per-head precision, adding both an engineering step and a source of mismatch between the profiling distribution and real traffic.
+
+3. Method
+
+SGC operates in two phases: an accumulation phase during training, and a masking phase applied once before deployment.
+
+Accumulation phase: During each gradient-checkpointed backward pass, we already recompute the forward activations for a subset of transformer layers. We augment this recomputation to additionally record, for each attention head h and layer l, the L2 norm of the gradient flowing into that head's value projection, accumulated as an exponential moving average across training steps: importance(h, l) is updated as a weighted combination of its previous value and the current step's gradient norm, with a decay factor that gives more weight to recent training steps. This adds a single reduction operation per head per checkpointed step, which we measure at under 1.5% wall-clock overhead relative to standard gradient checkpointing.
+
+Masking phase: After training, heads are ranked by their accumulated importance score within each layer. We select the bottom fraction of heads per layer (a hyperparameter we call the sparsity ratio, tuned per model family) and assign them to 2-bit quantization of their cached keys and values; the remaining heads are quantized to 4 bits. Critically, this ranking-and-masking step requires no forward passes over new data -- it is a deterministic function of the accumulated training-time statistics, so it can be computed offline in under a second regardless of model size.
+
+We additionally explore a variant, SGC-adaptive, in which the sparsity ratio itself is chosen per layer rather than globally, based on the variance of importance scores within that layer: layers where importance scores are highly concentrated in a few heads (high variance) can tolerate a higher sparsity ratio than layers where importance is spread evenly.
+
+4. Experiments
+
+We evaluate SGC on three open-weight model families spanning 1.3B, 7B, and 13B parameters, using held-out validation splits of a long-document corpus with sequence lengths up to 32k tokens. Our primary metrics are (a) KV-cache memory footprint relative to an uncompressed FP16 baseline, and (b) validation perplexity delta relative to that same baseline.
+
+Across all three model sizes, SGC achieves a 41-58% reduction in KV-cache memory at 32k context length, with the largest reductions observed in the 13B model, consistent with the intuition that larger models have more redundant attention heads. Perplexity degradation stays under 0.3 points in all configurations we tested, and under 0.15 points for the 7B and 13B models specifically. SGC-adaptive provides a further 4-7% memory reduction over the fixed-ratio variant at matched perplexity, at the cost of a slightly more complex deployment configuration (per-layer rather than global sparsity ratios).
+
+We compare against two baselines: a token-eviction method (sliding window with attention-score recency weighting) and a uniform 4-bit KV quantization scheme with no per-head selectivity. At matched memory budgets, SGC outperforms token eviction by a wide margin on retrieval-style tasks where the evicted tokens are later needed, and outperforms uniform quantization by 0.1-0.2 perplexity points at the same compression ratio, which we attribute to the benefit of protecting high-importance heads at full precision rather than compressing everything uniformly.
+
+We also measure the overhead of the accumulation phase directly: across all three model sizes, the added wall-clock training time from accumulating per-head gradient norms during checkpointed backward passes is between 0.9% and 1.5%, which we consider negligible relative to the cost of a full training run.
+
+5. Limitations
+
+SGC's importance signal is derived from the training distribution, so its accuracy depends on how representative that training data is of eventual deployment traffic; a model fine-tuned primarily on short-context data and then deployed on long-context workloads may have an importance signal that under-represents heads that matter specifically for long-range dependencies, since those heads may rarely receive large gradients during short-context training. We did not evaluate SGC under this kind of training/deployment distribution mismatch directly, and consider it the most likely failure mode in practice. Second, our evaluation is limited to three model families in the 1.3B-13B range; we have not validated whether the 41-58% compression figures extrapolate to substantially larger models (100B+), where the ratio of redundant to critical heads may differ. Third, SGC assumes access to the training process itself in order to accumulate importance scores; it cannot be applied post hoc to an already-trained model whose training logs were not instrumented, unlike serving-time profiling approaches, which trade this convenience for the calibration-drift problems discussed in Section 2. Finally, we have not characterized SGC's interaction with speculative decoding or other inference-time techniques that also modify KV-cache access patterns, and leave this to future work.
+
+6. Conclusion
+
+We presented Sparse Gradient Checkpointing, a method for deriving per-head KV-cache compression masks directly from training-time gradient statistics rather than a separate serving-time profiling pass. SGC achieves substantial KV-cache memory reductions at long context lengths with minimal quality degradation and negligible training overhead, and its masks can be computed once, offline, before deployment. We view the core idea -- reusing signal that gradient checkpointing already computes, rather than introducing a new profiling stage -- as broadly applicable to other compression decisions made at deployment time.
+
+References
+
+[1] Chen et al., "Attention-Score Token Eviction for Long-Context Inference," 2024.
+[2] Okafor & Lindqvist, "Low-Rank Projections for KV-Cache Compression," 2024.
+[3] Ramanathan et al., "Mixed-Precision Key-Value Caching at Scale," 2025.
+[4] Sato & Dubois, "Gradient Checkpointing Revisited," 2023.
+[5] Nkemelu et al., "Retrieval-Augmented Generation with Bounded Memory," 2025.

@@ -1,0 +1,82 @@
+"""
+Node 7: Grounded QA with anti-hallucination prompt.
+
+Retrieves top-k chunks from ChromaDB, then instructs Groq to answer
+using ONLY those chunks.  If the answer isn't in the paper, the model
+is told to refuse rather than hallucinate.
+"""
+from __future__ import annotations
+
+from typing import List, Tuple
+
+from . import llm
+from . import vectorstore
+from .config import QA_TOP_K
+from .models import AgentState
+
+GROUNDED_SYSTEM_PROMPT = (
+    "You are an expert academic research assistant answering questions about "
+    "a specific paper. You are provided with the paper's general info (Title, Summary/Abstract) "
+    "and specific excerpts retrieved via search.\n\n"
+    "Instructions:\n"
+    "1. Answer the user's question using ONLY the provided Paper Info and excerpts.\n"
+    "2. If the user asks for a general explanation, overview, or broader context, use the Paper Info to provide a comprehensive answer.\n"
+    "3. If the user asks for specific details not found in the provided text, respond EXACTLY with: "
+    '"The provided text does not contain sufficient information to answer this question."\n'
+    "4. Do not use outside/pretrained knowledge. Keep answers clear and cite excerpts (e.g., [Excerpt 1]) when they are used."
+)
+
+# Max words per excerpt to stay within Groq free-tier token limits
+_MAX_EXCERPT_WORDS = 400
+
+
+def _truncate(text: str, max_words: int = _MAX_EXCERPT_WORDS) -> str:
+    """Truncate text to max_words, adding ellipsis if cut."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]) + " ..."
+
+
+def _format_context(retrieved: List[Tuple[str, float]]) -> str:
+    """Format retrieved chunks into a numbered context block."""
+    parts = []
+    for i, (text, score) in enumerate(retrieved, start=1):
+        truncated = _truncate(text)
+        parts.append(f"[Excerpt {i}, relevance={score:.2f}]\n{truncated}")
+    return "\n\n".join(parts)
+
+
+def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> str:
+    """
+    Answer a user question grounded in the paper's chunks and summary.
+
+    1. Retrieve top-k relevant chunks from ChromaDB
+    2. Combine with paper title and summary/abstract
+    3. Send to Groq with the anti-hallucination prompt
+    4. Return the grounded answer
+    """
+    retrieved = vectorstore.search(state.collection_name, question, top_k=top_k)
+
+    if not retrieved:
+        return (
+            "No indexed content is available for this paper, "
+            "so I can't answer questions about it."
+        )
+
+    context = _format_context(retrieved)
+    
+    paper_context = f"Title: {state.selected_paper.title}\n"
+    if state.briefing:
+        paper_context += f"Summary: {state.briefing.summary}\n"
+    else:
+        paper_context += f"Abstract: {state.selected_paper.abstract}\n"
+
+    user = (
+        f"Paper Info:\n{paper_context}\n\n"
+        f"Retrieved excerpts:\n{context}\n\n"
+        f"Question: {question}"
+    )
+
+    return llm.complete(GROUNDED_SYSTEM_PROMPT, user)
+
