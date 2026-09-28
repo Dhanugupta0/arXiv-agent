@@ -6,7 +6,7 @@ A CLI agent that takes a research topic or arXiv ID/URL, retrieves and parses th
 
 | Component | Technology | Why |
 |-----------|-----------|-----|
-| **LLM** | Groq API (`llama-3.3-70b-versatile`) | Fast inference, free tier, high quality |
+| **LLM** | Groq API (`qwen/qwen3.8-27b`) | Fast inference, free tier, high quality |
 | **Embeddings** | sentence-transformers (`BAAI/bge-small-en-v1.5`) | Local, no API key, works offline, 384-dim |
 | **Vector DB** | ChromaDB (persistent, local) | Embeddings persist to disk — no recomputation |
 | **PDF Parsing** | PyMuPDF → pypdf → OCR fallback | Multi-engine extraction with graceful degradation |

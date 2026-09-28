@@ -108,4 +108,11 @@ def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> 
         f"Question: {question}"
     )
 
-    return llm.complete(GROUNDED_SYSTEM_PROMPT, user)
+    try:
+        ans = llm.complete(GROUNDED_SYSTEM_PROMPT, user)
+        if ans:
+            return ans
+    except Exception:
+        pass
+
+    return _extractive_answer(state, question, retrieved)

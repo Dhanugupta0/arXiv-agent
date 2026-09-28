@@ -112,23 +112,33 @@ def _extractive_fields(paper: PaperMetadata, text: str) -> dict:
     }
 
 
+def strip_references(text: str) -> str:
+    """Strip references section at the end of a paper if present."""
+    pattern = r"\n\s*(?:\d*\.?\s*)?(?:References|BIBLIOGRAPHY|References and Notes)\s*\n"
+    match = list(re.finditer(pattern, text, re.IGNORECASE))
+    if match:
+        last_match = match[-1]
+        if last_match.start() > len(text) * 0.5:
+            return text[:last_match.start()].strip()
+    return text
+
+
 def generate_briefing(paper: PaperMetadata, full_text: str, degraded: bool) -> Briefing:
     """
     Generate a structured executive briefing.
 
-    If GROQ_API_KEY is set: tries LLM first, falls back to extractive heuristics.
-    If GROQ_API_KEY is NOT set: uses extractive heuristics directly (zero-config mode).
+    Uses full reference-stripped paper text with LLM or extractive fallback.
     """
+    cleaned_text = strip_references(full_text)
     fields = None
 
-    if has_groq_key():
-        try:
-            fields = _llm_briefing_fields(paper, full_text)
-        except Exception:
-            pass  # fall through to extractive
+    try:
+        fields = _llm_briefing_fields(paper, cleaned_text)
+    except Exception:
+        pass  # fall through to extractive
 
     if fields is None:
-        fields = _extractive_fields(paper, full_text)
+        fields = _extractive_fields(paper, cleaned_text)
         if not has_groq_key():
             degraded = True  # mark as degraded when running without LLM
 

@@ -19,7 +19,7 @@ load_dotenv(_PROJECT_ROOT / ".env")
 GROQ_API_KEY: str = os.environ.get("GROQ_API_KEY", "")
 
 # ── Groq LLM settings ────────────────────────────────────────────────────
-GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
 GROQ_TEMPERATURE: float = float(os.environ.get("GROQ_TEMPERATURE", "0.2"))
 GROQ_MAX_TOKENS: int = int(os.environ.get("GROQ_MAX_TOKENS", "4096"))
 
