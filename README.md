@@ -61,130 +61,10 @@ Imagine having a **tireless, super-fast research partner** sitting inside your t
 7. **Anti-Hallucination Q&A with Receipts:** When you ask questions about the paper, the agent retrieves the top 3 relevant paragraphs from ChromaDB and tells the model: *"Answer using ONLY these excerpts and cite them like [Excerpt 1]. If the answer isn't in the text, say you don't know."* No hallucinations, no guessing.
 8. **Durable Session Memory:** Everything is saved to clean, human-readable JSON files in `sessions/`. You can close your laptop, come back days later, and run `python main.py qa <arxiv_id>` to continue asking questions instantly.
 
-```mermaid
-flowchart TD
-    %% Styling
-    classDef input fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b;
-    classDef node fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c;
-    classDef storage fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20;
-    classDef llm fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100;
-    classDef decision fill:#fffde7,stroke:#fbc02d,stroke-width:2px,color:#f57f17;
-
-    User([User CLI / Terminal]):::input -->|Query, ID, or URL| Main[main.py CLI Router]:::input
-
-    subgraph StateGraph [7-Node Agent State Graph]
-        direction TB
-        N1[Node 1: Query Understanding\nRegex Intent Parsing]:::node --> DecIntent{Direct ID or Topic?}:::decision
-
-        DecIntent -->|Direct ID / URL| N2A[Node 2: Fetch Paper by ID]:::node
-        DecIntent -->|Topic Search| N2B[Node 2: arXiv Search API]:::node
-
-        N2B --> DecFound{Results Found?}:::decision
-        DecFound -->|No & Retries < 1| N2Exp[Query Expansion\nBroaden Terms]:::node
-        N2Exp --> N2B
-        DecFound -->|Still 0| EndFail([Terminal: No Results]):::decision
-        DecFound -->|>= 1 Papers| N3[Node 3: Selection / Ranking\nLLM-as-Judge]:::node
-
-        N2A --> N3
-        N3 --> N4[Node 4: Fetch & Parse PDF\nPyMuPDF ➔ pypdf ➔ OCR ➔ Abstract]:::node
-        N4 --> N5[Node 5: Chunk & Embed\nReference Stripping + BGE Local]:::node
-        N5 --> N6[Node 6: Executive Briefing\nGroq JSON / Extractive Fallback]:::node
-        N6 --> Pause([State: awaiting_qa]):::decision
-        Pause --> N7[Node 7: Interactive Grounded QA\nChromaDB Top-K + Anti-Hallucination]:::node
-        N7 -->|Follow-up Question| N7
-    end
-
-    Main --> StateGraph
-
-    %% External & Persistence Links
-    N2A & N2B -.->|Atom XML| ArxivAPI[(arXiv API)]:::storage
-    N4 -.->|HTTP GET| ArxivPDF[(arXiv PDF Server)]:::storage
-    N5 <-->|Dense Embeddings| BGE[sentence-transformers\nBAAI/bge-small-en-v1.5]:::storage
-    N5 <-->|Store & Search Vectors| Chroma[(ChromaDB\nchroma_store/)]:::storage
-    N7 <-->|Top-K Vector Retrieval| Chroma
-    N3 & N6 & N7 <-->|Completions| GroqAPI[(Groq Cloud API\nqwen/qwen3.8-27b)]:::llm
-    N6 & N7 -.->|Fallback when no key| MockLLM[Mock / Extractive Engine]:::llm
-    StateGraph <-->|Save / Resume Session| SessionsDisk[(Disk: sessions/*.json)]:::storage
-```
-
----
 
 ## 🔄 Agent Loop & Techniques (Start to End)
 
-The agent processes information across seven discrete, measurable pipeline nodes. Below is the complete step-by-step technique breakdown:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant CLI as CLI (Rich)
-    participant Graph as Agent Graph (AgentState)
-    participant Arxiv as arXiv Service
-    participant Parser as PDF Parser Chain
-    participant Vector as Local BGE + ChromaDB
-    participant LLM as Groq / Mock LLM
-    participant Disk as Session Storage
-
-    User->>CLI: python main.py digest "KV-cache compression"
-    CLI->>Graph: run_ingest(query)
-    
-    rect rgb(240, 248, 255)
-        note over Graph: Node 1: Query Understanding
-        Graph->>Graph: Regex classification (detect ID, URL, or keywords)
-    end
-
-    rect rgb(255, 250, 240)
-        note over Graph,Arxiv: Node 2: arXiv Retrieval
-        Graph->>Arxiv: search_by_topic(all:keywords)
-        alt Zero results
-            Graph->>Graph: Heuristic query expansion (strip quotes, relax last word)
-            Graph->>Arxiv: search_by_topic(broadened_keywords)
-        end
-        Arxiv-->>Graph: Candidate list (PaperMetadata)
-    end
-
-    rect rgb(245, 255, 250)
-        note over Graph,LLM: Node 3: Candidate Selection
-        Graph->>LLM: LLM-as-Judge ranking prompt
-        LLM-->>Graph: Winner Paper Index
-    end
-
-    rect rgb(255, 245, 245)
-        note over Graph,Parser: Node 4: Fetch & Parse
-        Graph->>Parser: download_pdf(url) ➔ parse_pdf(bytes)
-        note over Parser: PyMuPDF ➔ pypdf ➔ OCR ➔ Abstract-only fallback
-        Parser-->>Graph: Clean text + parse diagnostics
-    end
-
-    rect rgb(240, 255, 255)
-        note over Graph,Vector: Node 5: Chunk & Embed
-        Graph->>Graph: Strip References section
-        Graph->>Graph: Sliding window chunking (800 words, 150 overlap)
-        Graph->>Vector: Local BGE embed + ChromaDB upsert (idempotent)
-    end
-
-    rect rgb(255, 240, 245)
-        note over Graph,LLM: Node 6: Executive Briefing
-        Graph->>LLM: JSON schema prompt (summary, method, results, limitations)
-        LLM-->>Graph: Structured JSON Briefing
-        Graph->>Disk: Persist state to sessions/<arxiv_id>.json
-    end
-
-    Graph-->>CLI: Display Executive Briefing Panel
-
-    rect rgb(250, 250, 210)
-        note over User,LLM: Node 7: Grounded QA Loop
-        loop Until user types exit
-            User->>CLI: Ask question
-            CLI->>Vector: Top-K Cosine Search (with BGE instruction prefix)
-            Vector-->>CLI: Top 3 Chunks + Scores
-            CLI->>LLM: Grounded QA Prompt (Anti-hallucination guardrails)
-            LLM-->>CLI: Answer with citations ([Excerpt 1])
-            CLI-->>User: Rich styled answer
-            CLI->>Disk: Update conversation history in sessions/
-        end
-    end
-```
+The agent processes information across seven discrete, measurable pipeline nodes. 
 
 ### Detailed Node Breakdown
 
@@ -406,38 +286,7 @@ classDiagram
 
 ---
 
-## 📋 Functional & Non-Functional Requirements
 
-### 🎯 Functional Requirements (FR)
-
-| ID | Requirement | Implementation Detail |
-|---|---|---|
-| **FR-01** | Flexible Input Ingestion | Accept raw topic strings, exact 8-digit arXiv IDs (`2401.12345`), or full URLs (`https://arxiv.org/abs/...`). |
-| **FR-02** | Deterministic Query Parsing | Differentiate IDs vs free-text search using regex before allocating network/LLM calls. |
-| **FR-03** | Automated Paper Retrieval | Search papers via the official arXiv Atom feed and parse author, abstract, dates, and links. |
-| **FR-04** | Autonomous Query Expansion | Broaden queries automatically if 0 results match, preventing blank returns. |
-| **FR-05** | Candidate Arbitration | Rank multiple matching papers using LLM-as-a-judge prompt or fall back to date recency. |
-| **FR-06** | Robust PDF Extraction | Stream PDF bytes and sequentially attempt PyMuPDF, pypdf, and OCR with character health validation. |
-| **FR-07** | Semantic Document Chunking | Strip references and divide body text into 800-word chunks with 150-word sliding window overlaps. |
-| **FR-08** | Dense Vector Indexing | Generate 384-dimensional dense vectors using local BGE model and store persistently in ChromaDB. |
-| **FR-09** | Executive Briefing | Synthesize a 6-part structured briefing (Summary, Problem, Method, Results, Limitations, Follow-up Questions). |
-| **FR-10** | Interactive Grounded Q&A | Provide a terminal Q&A loop backed by ChromaDB Top-3 cosine retrieval with excerpt citations. |
-| **FR-11** | Conversation History & Resume | Persist all state into `sessions/<arxiv_id>.json` allowing session resumption with `main.py qa <id>`. |
-| **FR-12** | Offline Demo Mode | Bundle a local synthetic paper (`sample_paper.txt`) to run end-to-end without internet access. |
-
-### ⚡ Non-Functional Requirements (NFR)
-
-| ID | Category | Requirement & Implementation |
-|---|---|---|
-| **NFR-01** | **Fault Tolerance & Graceful Degradation** | The system must **never crash** due to missing API keys, corrupt PDFs, or rate limits. Degradation path drops to extractive heuristics and abstract-only summaries. |
-| **NFR-02** | **Hallucination Mitigation** | Strict negative constraints in QA prompt. If information is missing from retrieved chunks, agent refuses to guess. |
-| **NFR-03** | **Zero-Configuration Usability** | Works out-of-the-box without requiring an API key. Local model auto-downloads on first run. |
-| **NFR-04** | **Idempotent Storage & Performance** | Papers already embedded in ChromaDB bypass redundant embedding calculations. Repeated queries load in milliseconds. |
-| **NFR-05** | **Privacy & Local Computing** | Embeddings and vector searches remain 100% on the local machine. Only text excerpts sent to Groq when configured. |
-| **NFR-06** | **Low Latency** | Groq inference provides sub-second token delivery; local BGE model completes inference in $< 200$ms on CPU. |
-| **NFR-07** | **Platform Portability** | Pure Python implementation running identically on Linux, macOS, and Windows. |
-
----
 
 ## 🛡️ Cascading Fallbacks & Resilience Matrix
 
@@ -552,56 +401,6 @@ python main.py demo
 
 ---
 
-## 🎬 Video Presentation & Demo Blueprint
-
-If you are recording a demo, walkthrough, or video presentation of this agent, use this battle-tested 4-minute script:
-
-```mermaid
-journey
-    title 4-Minute Video Presentation Flow
-    section 00:00 - 00:45 Intro
-      Show problem: Dense 30-page PDF: 5: Presenter
-      Introduce arXiv Digest Agent solution: 5: Presenter
-    section 00:45 - 01:45 Live Digest
-      Run main.py digest: 5: Terminal
-      Highlight Rich spinners & 7-node pipeline: 5: Terminal
-      Show structured Executive Briefing: 5: Terminal
-    section 01:45 - 02:45 Grounded QA
-      Ask specific benchmark question: 5: User
-      Show inline excerpt citations: 5: Terminal
-      Test anti-hallucination guardrail: 5: Terminal
-    section 02:45 - 03:45 Architecture & Fallbacks
-      Explain 7-node state machine: 5: Architecture
-      Explain offline fallback & ChromaDB persistence: 5: Architecture
-    section 03:45 - 04:00 Outro
-      Show python main.py sessions: 5: Terminal
-      Closing wrap-up: 5: Presenter
-```
-
-### Talking Points by Timestamp
-
-- **[0:00 - 0:45] The Hook:**
-  - *"Researchers and engineers are flooded with dozens of new arXiv papers every week. Reading full 30-page PDFs just to find benchmarks and limitations is inefficient."*
-  - *"Meet the Autonomous arXiv Digest Agent: a command-line pair-researcher that searches, parses, indexes, and briefs you on any paper in seconds."*
-- **[0:45 - 1:45] The Ingestion & Briefing Demo:**
-  - Run: `python main.py digest "KV-cache compression for LLMs"`
-  - Point out the terminal spinners showing Node 1 to Node 6 in real time.
-  - Explain the 6-part executive briefing: Why This Paper Matters, Problem Statement, Method, Key Results, Limitations, and Suggested Questions.
-- **[1:45 - 2:45] Grounded RAG & Anti-Hallucination:**
-  - Ask: *"What datasets were used to evaluate this method?"*
-  - Show the response citing `[Excerpt 1]`.
-  - Ask an impossible question: *"What is the author's personal phone number?"*
-  - Show the exact refusal guardrail: *"The provided text does not contain sufficient information to answer this question."*
-- **[2:45 - 3:30] Technical Highlights:**
-  - Point to **local BGE embeddings** (no OpenAI embedding cost, runs offline on CPU).
-  - Point to **ChromaDB disk persistence** (re-indexing is avoided; instant resume).
-  - Point to **cascading PDF parsers** (PyMuPDF ➔ pypdf ➔ OCR ➔ Abstract).
-- **[3:30 - 4:00] Session Resumption:**
-  - Exit the QA loop (`exit`).
-  - Run: `python main.py sessions` to show the persisted catalog.
-  - Run: `python main.py qa <arxiv_id>` to show immediate resume without re-fetching.
-
----
 
 ## 📂 Project Directory Layout
 
@@ -634,5 +433,5 @@ arxiv-agent/
 ---
 
 <div align="center">
-Built with ❤️ using Groq, ChromaDB, sentence-transformers, and Rich.
+Thank you 
 </div>
