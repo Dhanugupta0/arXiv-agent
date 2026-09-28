@@ -48,7 +48,8 @@ free-tier rate limits:
 | `openai/gpt-oss-20b` | 30 | 14,400 | 250,000 | 500,000 |
 | `qwen/qwen3.8-27b` | 30 | 14,400 | 6,000 | 500,000 |
 
-> Check [console.groq.com/docs/rate-limits](https://console.groq.com/docs/rate-limits) for current limits.
+> Check [console.groq.com/docs/rate-limits](https://console.groq.com/docs/ra
+te-limits) for current limits.
 > The agent includes automatic retry with backoff on 429 rate-limit errors.
 
 ## Usage

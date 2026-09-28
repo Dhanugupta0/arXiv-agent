@@ -31,8 +31,14 @@ def _ensure_model():
     """Load the SentenceTransformer model once (lazy singleton)."""
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        try:
+            from sentence_transformers import SentenceTransformer
+            _model = SentenceTransformer(EMBEDDING_MODEL)
+        except Exception as err:
+            raise RuntimeError(
+                f"Failed to load local embedding model '{EMBEDDING_MODEL}'. "
+                "If running offline, please ensure the model has been downloaded at least once with an active internet connection."
+            ) from err
     return _model
 
 
