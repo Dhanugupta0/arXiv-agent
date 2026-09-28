@@ -15,12 +15,14 @@
 
 - [✨ Key Features](#-key-features)
 - [🏗️ High-Level System Architecture](#️-high-level-system-architecture)
+  - [💡 The Architecture in Simple Words (Plain English)](#-the-architecture-in-simple-words-plain-english)
 - [🔄 Agent Loop & Techniques (Start to End)](#-agent-loop--techniques-start-to-end)
 - [🛠️ Tech Stack & Technical Rationale](#️-tech-stack--technical-rationale)
 - [🔌 Major APIs, Protocols & Schemas](#-major-apis-protocols--schemas)
 - [📋 Functional & Non-Functional Requirements](#-functional--non-functional-requirements)
 - [🛡️ Cascading Fallbacks & Resilience Matrix](#️-cascading-fallbacks--resilience-matrix)
 - [🚀 Quickstart & Interactive Walkthrough](#-quickstart--interactive-walkthrough)
+  - [📸 Live Ingestion Demos in Action](#-live-ingestion-demos-in-action)
 - [🎬 Video Presentation & Demo Blueprint](#-video-presentation--demo-blueprint)
 - [📂 Project Directory Layout](#-project-directory-layout)
 
@@ -42,7 +44,22 @@
 
 ## 🏗️ High-Level System Architecture
 
-The agent is organized as a **custom deterministic state graph** centered around a shared, mutable state object (`AgentState`).
+<p align="center">
+  <img src="img/HLD.png" alt="Autonomous arXiv Digest Agent High Level Design Architecture" width="100%" />
+</p>
+
+### 💡 The Architecture in Simple Words (Plain English)
+
+Imagine having a **tireless, super-fast research partner** sitting inside your terminal. Here is how the agent processes your requests in plain, everyday language:
+
+1. **Instant Query Routing (No Wasted Money):** When you type a query, the agent doesn't waste expensive AI tokens asking *"is this a link or a topic?"*. Instead, a lightning-fast regular expression checks if you provided an arXiv ID (`2401.12345`) or an arXiv URL. If yes, it fetches that exact paper immediately. If it's a general topic like `"KV-cache compression"`, it triggers an academic search.
+2. **Self-Healing arXiv Search:** The agent queries arXiv's official search engine. If your search terms were too specific and returned 0 papers, it doesn't give up! It automatically loosens quotes, removes parenthetical filters, and drops trailing keywords to retry the search on its own.
+3. **Smart Paper Selection (LLM Judge):** When a topic search returns multiple papers, an AI judge reads their titles and abstracts to pick the single most relevant paper for your request.
+4. **Bulletproof 4-Tier PDF Reader:** Academic PDFs are notorious for complex two-column layouts, weird fonts, and scanned figures. The agent uses a safety-ladder approach: it tries **PyMuPDF** (preserving two-column reading order) ➔ then **pypdf** ➔ then **OCR image reading**. If the PDF is completely broken or unreachable, it gracefully falls back to using the abstract. **The agent never crashes.**
+5. **Local & Free Vector Memory (ChromaDB + BGE Embeddings):** It strips out references and bibliographies to keep search results clean, divides the paper into 800-word chunks, and converts them into mathematical vectors using a **local, 100% offline model (`BGE-small`) running directly on your CPU**. It stores these vectors into a local **ChromaDB** database on disk. You don't pay a single cent for embeddings, and it never re-processes a paper you've already indexed.
+6. **Executive Briefing Card:** It feeds the clean text to **Groq's ultra-fast Qwen model** to produce a structured, high-impact briefing (Summary, Problem Statement, Method, Key Results, and Inferred Limitations). If you don't have an API key, an offline heuristic extractor creates the briefing for you.
+7. **Anti-Hallucination Q&A with Receipts:** When you ask questions about the paper, the agent retrieves the top 3 relevant paragraphs from ChromaDB and tells the model: *"Answer using ONLY these excerpts and cite them like [Excerpt 1]. If the answer isn't in the text, say you don't know."* No hallucinations, no guessing.
+8. **Durable Session Memory:** Everything is saved to clean, human-readable JSON files in `sessions/`. You can close your laptop, come back days later, and run `python main.py qa <arxiv_id>` to continue asking questions instantly.
 
 ```mermaid
 flowchart TD
@@ -515,6 +532,23 @@ python main.py sessions
 python main.py demo
 ```
 </details>
+
+### 📸 Live Ingestion Demos in Action
+
+<table width="100%">
+  <tr>
+    <th width="50%" align="center"><b>Direct Paper ID Digest (<code>python main.py digest 2401.12345</code>)</b></th>
+    <th width="50%" align="center"><b>Topic Search Digest (<code>python main.py digest "KV-cache compression for LLMs"</code>)</b></th>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="img/demo_direct_id.png" alt="Direct arXiv ID Ingestion Demo" width="100%" />
+    </td>
+    <td align="center">
+      <img src="img/demo_topic_search.png" alt="Topic Search Ingestion Demo" width="100%" />
+    </td>
+  </tr>
+</table>
 
 ---
 
