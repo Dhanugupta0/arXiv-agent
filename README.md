@@ -170,6 +170,53 @@ The agent processes information across seven discrete, measurable pipeline nodes
 
 ---
 
+## ⚖️ Design Decisions & Tradeoffs
+
+### 1. What We Chose & Why
+
+- **Groq API (`qwen/qwen3.8-27b`) over Multi-Provider Routing:**
+  - *Decision:* Standardized on Groq with Qwen 2.5 / 3.8.
+  - *Rationale:* Sub-second token generation speeds up real-time CLI usage dramatically. Generous free developer tier with 131k context window and top-tier JSON schema following. Avoiding a complex multi-provider wrapper keeps the codebase lean and maintainable.
+- **Local Dense Embeddings (`BAAI/bge-small-en-v1.5`) over Cloud APIs:**
+  - *Decision:* Sentence-Transformers running locally on CPU with asymmetric query prefixing.
+  - *Rationale:* No API keys or external credits required. Works completely offline after a one-time ~130MB model download. SOTA MTEB retrieval performance in a lightweight 33M parameter footprint.
+- **Disk-Persisted ChromaDB over In-Memory/Cloud Vector DBs:**
+  - *Decision:* Local ChromaDB persistent storage (`chroma_store/`) with collections keyed by `paper_{arxiv_id}_{embedding_tag}`.
+  - *Rationale:* Zero infrastructure overhead (no Docker/cloud cluster needed). Embeddings are indexed once and reused across sessions, eliminating redundant embedding computations.
+- **Explicit 7-Node State Machine over Heavy Agent Frameworks (LangGraph / CrewAI):**
+  - *Decision:* Custom deterministic state machine centered on a shared `AgentState` dataclass.
+  - *Rationale:* Complete execution visibility, instant debugging, zero framework abstraction overhead, and no hidden prompt injections or silent retries.
+- **Regex-First Deterministic Intent Routing:**
+  - *Decision:* Regex checks for arXiv IDs (`2401.12345`) and URLs before any network or model call.
+  - *Rationale:* Burning an LLM call to classify a structured 8-digit identifier wastes tokens and adds 500ms of unnecessary latency.
+- **Word-Based Sliding Window Chunking + Reference Pruning:**
+  - *Decision:* 800-word chunks with 150-word overlap; bibliography sections past 40% are stripped.
+  - *Rationale:* Avoids tokenizer dependencies (`tiktoken`), preserves cross-boundary semantic context, and stops citation blocks from cluttering the vector retrieval space.
+
+---
+
+### 2. What We'd Do Differently With More Time
+
+- **Multi-Hop & Cross-Encoder Re-Ranking:**
+  - Add a lightweight re-ranking model (e.g. `bge-reranker-base`) after initial ChromaDB retrieval to improve ranking precision on complex cross-section queries (like methodology comparisons).
+- **Multi-Paper Comparative Synthesis:**
+  - Support cross-paper queries (e.g., comparing KV-cache compression techniques across 3 different papers in a single synthesis prompt).
+- **Multimodal / Vision-Based PDF Ingestion:**
+  - Use visual document models (like Llama 3.2 Vision) to parse high-density benchmark tables, architectural flowcharts, and mathematical proofs directly instead of relying solely on OCR/text scrapers.
+- **Agentic External Verification Tools:**
+  - Allow the agent to dynamically search for author GitHub repositories, benchmark codebases, and OpenReview comments to verify experimental claims and reproducibility.
+
+---
+
+### 3. Known Limitations
+
+- **OCR Host Dependencies:** The optical character recognition fallback relies on system-level `tesseract-ocr` and `poppler-utils` packages. If not installed, corrupted/scanned PDFs degrade to abstract-only summaries.
+- **Heuristic Query Expansion:** Query broadening for 0-result searches is rule-based (strips quotes and removes the last keyword) rather than semantic LLM-driven query rewriting.
+- **Isolated Per-Paper Collections:** Each paper gets its own ChromaDB collection; questions cannot currently be asked across multiple papers at the same time.
+- **Complex Two-Column Math & Tables:** Highly intricate mathematical formulas and multi-column tables can occasionally lose spatial alignment during PDF text extraction.
+
+---
+
 ## 🛠️ Tech Stack & Technical Rationale
 
 | Layer | Component | Technology | Rationale |
@@ -385,6 +432,8 @@ python main.py sessions
 python main.py demo
 ```
 </details>
+
+
 
 
 
