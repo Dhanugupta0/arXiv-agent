@@ -11,20 +11,24 @@
 
 ---
 
-## 📑 Table of Contents
 
-- [✨ Key Features](#-key-features)
-- [🏗️ High-Level System Architecture](#️-high-level-system-architecture)
-  - [💡 The Architecture in Simple Words (Plain English)](#-the-architecture-in-simple-words-plain-english)
-- [🔄 Agent Loop & Techniques (Start to End)](#-agent-loop--techniques-start-to-end)
-- [🛠️ Tech Stack & Technical Rationale](#️-tech-stack--technical-rationale)
-- [🔌 Major APIs, Protocols & Schemas](#-major-apis-protocols--schemas)
-- [📋 Functional & Non-Functional Requirements](#-functional--non-functional-requirements)
-- [🛡️ Cascading Fallbacks & Resilience Matrix](#️-cascading-fallbacks--resilience-matrix)
-- [🚀 Quickstart & Interactive Walkthrough](#-quickstart--interactive-walkthrough)
-  - [📸 Live Ingestion Demos in Action](#-live-ingestion-demos-in-action)
-- [🎬 Video Presentation & Demo Blueprint](#-video-presentation--demo-blueprint)
-- [📂 Project Directory Layout](#-project-directory-layout)
+
+### 📸 Live Ingestion Demos in Action
+
+<table width="100%">
+  <tr>
+    <th width="50%" align="center"><b>Direct Paper ID Digest (<code>python main.py digest 2401.12345</code>)</b></th>
+    <th width="50%" align="center"><b>Topic Search Digest (<code>python main.py digest "KV-cache compression for LLMs"</code>)</b></th>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="img/demo_direct_id.png" alt="Direct arXiv ID Ingestion Demo" width="100%" />
+    </td>
+    <td align="center">
+      <img src="img/demo_topic_search.png" alt="Topic Search Ingestion Demo" width="100%" />
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -382,24 +386,7 @@ python main.py demo
 ```
 </details>
 
-### 📸 Live Ingestion Demos in Action
 
-<table width="100%">
-  <tr>
-    <th width="50%" align="center"><b>Direct Paper ID Digest (<code>python main.py digest 2401.12345</code>)</b></th>
-    <th width="50%" align="center"><b>Topic Search Digest (<code>python main.py digest "KV-cache compression for LLMs"</code>)</b></th>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="img/demo_direct_id.png" alt="Direct arXiv ID Ingestion Demo" width="100%" />
-    </td>
-    <td align="center">
-      <img src="img/demo_topic_search.png" alt="Topic Search Ingestion Demo" width="100%" />
-    </td>
-  </tr>
-</table>
-
----
 
 
 ## 📂 Project Directory Layout
