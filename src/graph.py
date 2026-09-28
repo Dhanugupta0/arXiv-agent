@@ -81,10 +81,8 @@ class ArxivDigestGraph:
             state.selected_paper = candidates[0]
             return
 
-        # Use Groq LLM to pick the most relevant paper (if key is available)
-        chosen = None
-        if has_groq_key():
-            chosen = self._llm_rank(state.search_keywords or state.input_query, candidates)
+        # Use LLM-as-judge (Groq or Mock fallback) to pick the most relevant paper
+        chosen = self._llm_rank(state.search_keywords or state.input_query, candidates)
         if chosen is not None:
             state.selected_paper = chosen
             return
@@ -105,10 +103,13 @@ class ArxivDigestGraph:
         )
         user = f"Query: {query}\n\nCandidates:\n{listing}\n\nWhich number is the most relevant?"
         try:
-            raw = llm.complete(system, user).strip()
-            n = int("".join(ch for ch in raw if ch.isdigit()))
-            if 1 <= n <= len(candidates):
-                return candidates[n - 1]
+            provider = llm.get_llm("auto")
+            raw = provider.complete(system, user).strip()
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            if digits:
+                n = int(digits)
+                if 1 <= n <= len(candidates):
+                    return candidates[n - 1]
         except Exception:
             pass
         return None

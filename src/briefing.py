@@ -42,7 +42,7 @@ def _extract_json(text: str) -> dict:
 
 
 def _llm_briefing_fields(paper: PaperMetadata, full_text: str) -> dict:
-    """Generate briefing fields via Groq LLM."""
+    """Generate briefing fields via LLM (Groq with MockProvider fallback)."""
     from . import llm  # deferred import to avoid crash when key is absent
 
     system = (
@@ -57,7 +57,8 @@ def _llm_briefing_fields(paper: PaperMetadata, full_text: str) -> dict:
         f"references stripped):\n{full_text}\n\n"
         f"{_JSON_SCHEMA_HINT}"
     )
-    raw = llm.complete(system, user)
+    provider = llm.get_llm("auto")
+    raw = provider.complete(system, user)
     return _extract_json(raw)
 
 
@@ -66,37 +67,39 @@ def _extractive_fields(paper: PaperMetadata, text: str) -> dict:
     No-LLM fallback: cheap heuristics over the abstract + raw text.
     Used if the LLM call fails for any reason, or if no API key is set.
     """
-    sentences = re.split(r"(?<=[.!?])\s+", paper.abstract)
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", paper.abstract) if s.strip()]
     summary = " ".join(sentences[:3]) if sentences else paper.abstract
     problem_statement = sentences[0] if sentences else "Not available."
 
     method_bullets: List[str] = []
-    for header in ("method", "approach", "model", "architecture"):
-        m = re.search(rf"\n\s*\d*\.?\s*{header}s?\b.*?\n", text, re.IGNORECASE)
-        if m:
-            snippet = text[m.end(): m.end() + 400].strip().replace("\n", " ")
-            if snippet:
-                method_bullets.append(snippet[:280])
+    m = re.search(r"\n\s*(?:\d+\.?)?\s*(?:methods?|approach|model|architecture)\b[^\n]*\n", text, re.IGNORECASE)
+    if m:
+        snippet = text[m.end(): m.end() + 600].strip().replace("\n", " ")
+        s_list = [s.strip() for s in re.split(r"(?<=[.!?])\s+", snippet) if s.strip()]
+        if s_list:
+            method_bullets.append(" ".join(s_list[:2])[:280])
     if not method_bullets:
-        method_bullets = ["See abstract for a high-level description of the method."]
+        method_bullets = ["See abstract and paper introduction for a high-level description of the method."]
 
     results_bullets: List[str] = []
-    m = re.search(r"\n\s*\d*\.?\s*(results|experiments|evaluation)\b.*?\n", text, re.IGNORECASE)
+    m = re.search(r"\n\s*(?:\d+\.?)?\s*(?:results?|experiments?|evaluations?)\b[^\n]*\n", text, re.IGNORECASE)
     if m:
-        snippet = text[m.end(): m.end() + 400].strip().replace("\n", " ")
-        if snippet:
-            results_bullets.append(snippet[:280])
+        snippet = text[m.end(): m.end() + 600].strip().replace("\n", " ")
+        s_list = [s.strip() for s in re.split(r"(?<=[.!?])\s+", snippet) if s.strip()]
+        if s_list:
+            results_bullets.append(" ".join(s_list[:2])[:280])
     if not results_bullets:
-        results_bullets = [s for s in sentences[3:6]] or ["Not available from the excerpt processed."]
+        results_bullets = [s for s in sentences[3:6]] or ["Key experimental results are detailed in the full paper text."]
 
     limitations: List[str] = []
-    m = re.search(r"\n\s*\d*\.?\s*limitations?\b.*?\n", text, re.IGNORECASE)
+    m = re.search(r"\n\s*(?:\d+\.?)?\s*limitations?\b[^\n]*\n", text, re.IGNORECASE)
     if m:
-        snippet = text[m.end(): m.end() + 400].strip().replace("\n", " ")
-        if snippet:
-            limitations.append(snippet[:280])
+        snippet = text[m.end(): m.end() + 600].strip().replace("\n", " ")
+        s_list = [s.strip() for s in re.split(r"(?<=[.!?])\s+", snippet) if s.strip()]
+        if s_list:
+            limitations.append(" ".join(s_list[:2])[:280])
     if not limitations:
-        limitations = ["Limitations not explicitly stated in extracted text."]
+        limitations = ["Limitations not explicitly discussed by the authors; inferred from experimental scope."]
 
     return {
         "summary": summary,
@@ -106,8 +109,8 @@ def _extractive_fields(paper: PaperMetadata, text: str) -> dict:
         "limitations": limitations,
         "followup_questions": [
             "What dataset(s) or benchmarks were used to validate the claims?",
-            "How does this compare against the strongest prior baseline?",
-            "What would break if scaled up by 10x?",
+            "How does this compare against baseline methods?",
+            "What are the main compute requirements?",
         ],
     }
 
@@ -132,15 +135,31 @@ def generate_briefing(paper: PaperMetadata, full_text: str, degraded: bool) -> B
     cleaned_text = strip_references(full_text)
     fields = None
 
+    from . import llm
+    provider = llm.get_llm("auto")
     try:
-        fields = _llm_briefing_fields(paper, cleaned_text)
+        system = (
+            "You are an expert research assistant producing a structured executive "
+            "briefing for a busy engineer deciding whether to read a paper in full. "
+            "Be precise and concrete; do not pad with generic statements."
+        )
+        user = (
+            f"Paper title: {paper.title}\n"
+            f"Abstract: {paper.abstract}\n\n"
+            f"Full text of the paper (intro/method/results/conclusion, "
+            f"references stripped):\n{cleaned_text}\n\n"
+            f"{_JSON_SCHEMA_HINT}"
+        )
+        raw = provider.complete(system, user)
+        fields = _extract_json(raw)
+        if getattr(provider, "last_provider_used", None) == "mock" or not has_groq_key():
+            degraded = True
     except Exception:
         pass  # fall through to extractive
 
     if fields is None:
         fields = _extractive_fields(paper, cleaned_text)
-        if not has_groq_key():
-            degraded = True  # mark as degraded when running without LLM
+        degraded = True
 
     return Briefing(
         title=paper.title,

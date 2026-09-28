@@ -28,8 +28,8 @@ GROUNDED_SYSTEM_PROMPT = (
     "4. Do not use outside/pretrained knowledge. Keep answers clear and cite excerpts (e.g., [Excerpt 1]) when they are used."
 )
 
-# Max words per excerpt to stay within Groq free-tier token limits
-_MAX_EXCERPT_WORDS = 400
+# Max words safeguard per excerpt (comfortably exceeds the 800-word chunk size to preserve full text including limitations & conclusions)
+_MAX_EXCERPT_WORDS = 1500
 
 
 def _truncate(text: str, max_words: int = _MAX_EXCERPT_WORDS) -> str:
@@ -44,15 +44,15 @@ def _format_context(retrieved: List[Tuple[str, float]]) -> str:
     """Format retrieved chunks into a numbered context block."""
     parts = []
     for i, (text, score) in enumerate(retrieved, start=1):
-        truncated = _truncate(text)
-        parts.append(f"[Excerpt {i}, relevance={score:.2f}]\n{truncated}")
+        cleaned = _truncate(text.strip())
+        parts.append(f"[Excerpt {i}, relevance={score:.2f}]\n{cleaned}")
     return "\n\n".join(parts)
 
 
 def _extractive_answer(state: AgentState, question: str, retrieved: List[Tuple[str, float]]) -> str:
     """
     No-LLM fallback: return the most relevant chunk directly.
-    Provides a useful answer even without an API key.
+    Provides a useful answer even without an API key or when the LLM is unavailable.
     """
     if not retrieved:
         return (
@@ -61,13 +61,13 @@ def _extractive_answer(state: AgentState, question: str, retrieved: List[Tuple[s
         )
 
     best_text, best_score = retrieved[0]
-    truncated = _truncate(best_text, max_words=300)
+    cleaned = _truncate(best_text.strip())
 
     return (
-        f"**[Extractive answer — no LLM configured]**\n\n"
+        f"**[Extractive answer — offline/mock fallback]**\n\n"
         f"Most relevant passage (relevance: {best_score:.2f}):\n\n"
-        f"> {truncated}\n\n"
-        f"_Set GROQ_API_KEY in .env for synthesized, grounded answers._"
+        f"> {cleaned}\n\n"
+        f"_Note: Returning top-retrieved chunk directly because no LLM API key is configured or the LLM call was unavailable._"
     )
 
 
@@ -76,8 +76,9 @@ def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> 
     Answer a user question grounded in the paper's chunks and summary.
 
     1. Retrieve top-k relevant chunks from ChromaDB
-    2. If GROQ_API_KEY is set: combine with paper context, send to Groq
-    3. If GROQ_API_KEY is NOT set: return the top chunk directly (extractive)
+    2. Pass to LLM provider (AutoLLMProvider tries Groq with retries & backoff,
+       falling back to MockProvider on missing key or runtime errors)
+    3. Return synthesized or extractive answer
     """
     retrieved = vectorstore.search(state.collection_name, question, top_k=top_k)
 
@@ -86,13 +87,6 @@ def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> 
             "No indexed content is available for this paper, "
             "so I can't answer questions about it."
         )
-
-    # No-LLM fallback path
-    if not has_groq_key():
-        return _extractive_answer(state, question, retrieved)
-
-    # LLM-powered grounded QA
-    from . import llm  # deferred import
 
     context = _format_context(retrieved)
 
@@ -109,7 +103,9 @@ def answer_question(state: AgentState, question: str, top_k: int = QA_TOP_K) -> 
     )
 
     try:
-        ans = llm.complete(GROUNDED_SYSTEM_PROMPT, user)
+        from . import llm
+        provider = llm.get_llm("auto")
+        ans = provider.complete(GROUNDED_SYSTEM_PROMPT, user)
         if ans:
             return ans
     except Exception:

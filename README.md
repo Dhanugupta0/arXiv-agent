@@ -36,21 +36,21 @@ nano .env
 > **First run note:** The embedding model (`BAAI/bge-small-en-v1.5`, ~130MB) downloads
 > automatically from HuggingFace on first use. After that, it works fully offline.
 
-### Groq Free-Tier Rate Limits
+### Groq Rate Limits & Model Specifications
 
 The Groq API key is **optional** — the agent runs end-to-end without it using
-extractive heuristics. When you do set `GROQ_API_KEY`, be aware of Groq's
-free-tier rate limits:
+zero-key extractive heuristics (`MockProvider`). When you set `GROQ_API_KEY`,
+the agent utilizes Groq's hosted LLM inference. Current rate limits and specifications
+(as listed in [console.groq.com/docs/models](https://console.groq.com/docs/models)):
 
-| Model | RPM | RPD | TPM | TPD |
-|-------|-----|-----|-----|-----|
-| `llama-3.3-70b-versatile` | 30 | 1,000 | 12,000 | 100,000 |
-| `openai/gpt-oss-20b` | 30 | 14,400 | 250,000 | 500,000 |
-| `qwen/qwen3.8-27b` | 30 | 14,400 | 6,000 | 500,000 |
+| Model | RPM (Req/Min) | TPM (Tokens/Min) | Context Window | Max Completion | Plan / Tier |
+|---|---|---|---|---|---|
+| `qwen/qwen3.8-27b` (default) | 1,000 RPM | 250,000 TPM | 131,072 | 16,384 | Developer / Free (30 RPM free-tier base) |
+| `openai/gpt-oss-20b` | 1,000 RPM | 250,000 TPM | 131,072 | 65,536 | Developer / Free (30 RPM free-tier base) |
+| `openai/gpt-oss-120b` | 1,000 RPM | 250,000 TPM | 131,072 | 65,536 | Developer |
 
-> Check [console.groq.com/docs/rate-limits](https://console.groq.com/docs/ra
-te-limits) for current limits.
-> The agent includes automatic retry with backoff on 429 rate-limit errors.
+> Refer to [console.groq.com/docs/models](https://console.groq.com/docs/models) for real-time model catalog and limits.
+> The agent includes automatic retry with backoff (1-2s) on 429 rate-limit errors and transient connection failures, and seamlessly falls back to the offline extractive provider if retries are exhausted.
 
 ## Usage
 
