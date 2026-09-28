@@ -335,8 +335,8 @@ graph TD
 
 ```bash
 # Clone repository
-git clone https://github.com/your-username/arxiv-agent.git
-cd arxiv-agent
+git clone https://github.com/Dhanugupta0/arXiv-agent.git
+cd arXiv-agent
 
 # Create virtual environment
 python3 -m venv venv
